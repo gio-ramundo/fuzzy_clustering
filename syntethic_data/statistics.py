@@ -6,11 +6,12 @@ from typing import List
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import confusion_matrix
-from scipy.special import entr
-from scipy.stats import pearsonr, spearmanr, mode
+from scipy.stats import mode
 
 import numpy as np
 import pandas as pd
+
+from run_all_sd import NOISE_VALUES, STABILITY_INDICATORS, FUZ_RANGE
 
 # Function to align label of two different clustering
 def align_labels(labels_ref : np.array, labels : np.array) -> np.array:
@@ -40,21 +41,15 @@ def stability_statistics(list_labels, n_samples, n_runs):
         labels = list_labels[k, :].reshape(-1, 1)
         consensus += (labels == labels.T).astype(float)
     consensus /= n_runs
-    entropy_matrix = entr(consensus) + entr(1 - consensus)
-    point_entropy = np.nansum(entropy_matrix, axis=1) / n_samples
-    results.append(point_entropy)
-    for threshold in [0.5, 0.7, 0.9]:
-        mask = (consensus >= threshold) & (~np.eye(n_samples, dtype=bool))
-        C_filtered = np.where(mask, consensus, 0)
-        sum_cij = np.sum(C_filtered, axis=1)
-        count_cij = np.sum(mask, axis=1)
-        stability_avg = np.divide(sum_cij, count_cij, 
-                              out=np.zeros_like(sum_cij), 
-                              where=count_cij != 0)
-        results.append(stability_avg)
-    stability_matrix = np.abs(consensus - 0.5) * 2
-    stability_scores = np.mean(stability_matrix, axis=1)
-    results.append(stability_scores)
+    #for threshold in [0.5, 0.7, 0.9]:
+    mask = (consensus >= 0.5) & (~np.eye(n_samples, dtype=bool))
+    C_filtered = np.where(mask, consensus, 0)
+    sum_cij = np.sum(C_filtered, axis=1)
+    count_cij = np.sum(mask, axis=1)
+    stability_avg = np.divide(sum_cij, count_cij, 
+                          out=np.zeros_like(sum_cij), 
+                          where=count_cij != 0)
+    results.append(stability_avg)
     return results
 
 # Stability evaluation repeating clustering process with different initialization
@@ -98,93 +93,8 @@ def perturbation_stability(df : pd.DataFrame, n : int, feature_cols : List[str],
             all_labels[run] = align_labels(all_labels[0], labels)
     return stability_statistics(all_labels, n_samples, n_runs)
 
-# Correlations matrix
-def correlation_matrixes(df : pd.DataFrame, fuzzy_cols : List[str], stab_cols : List[str], output_dir : Path, output_name : str) -> None:
-    pearson_mat = pd.DataFrame(
-    index=fuzzy_cols,
-    columns=stab_cols,
-    dtype=float
-    )
-    spearman_mat = pearson_mat.copy()
-    for fuzz_col in fuzzy_cols:
-        for stab_col in stab_cols:
-            x = df[fuzz_col]
-            y = df[stab_col]
-            mask = x.notna() & y.notna()
-            x_clean = x[mask]
-            y_clean = y[mask]
-            if len(x_clean) > 2  and x_clean.nunique() > 1 and y_clean.nunique() > 1:
-                pearson_mat.loc[fuzz_col, stab_col] = pearsonr(x_clean, y_clean)[0]
-                spearman_mat.loc[fuzz_col, stab_col] = spearmanr(x_clean, y_clean)[0]
-            else:
-                pearson_mat.loc[fuzz_col, stab_col] = np.nan
-                spearman_mat.loc[fuzz_col, stab_col] = np.nan
-    out_dir = Path(output_dir, 'correlations_matrixes')
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = Path(out_dir, output_name+".xlsx")
-    with pd.ExcelWriter(out_path) as writer:
-        pearson_mat.to_excel(writer, sheet_name="Pearson")
-        spearman_mat.to_excel(writer, sheet_name="Spearman")
-
-# Fuzziness interval stability
-def fuzziness_by_intervals(df : pd.DataFrame, fuzzy_cols : List[str], stab_cols : List[str], output_dir : Path, output_name : str, bin_width : float=0.1) -> None:
-    bins = np.arange(0, 1 + bin_width, bin_width)
-    labels = [f"{round(bins[i],2)}–{round(bins[i+1],2)}"
-              for i in range(len(bins) - 1)]
-    out_dir = Path(output_dir, 'fuzziness_inetrvals')
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = Path(out_dir, output_name+".xlsx")
-    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
-        for fcol in fuzzy_cols:
-            temp = df.copy()
-            temp["fuzz_bin"] = pd.cut(
-                temp[fcol],
-                bins=bins,
-                labels=labels,
-                include_lowest=True
-            )
-            mean_stab = (
-                temp
-                .groupby("fuzz_bin")[stab_cols]
-                .mean()
-            )
-            counts = (
-                temp
-                .groupby("fuzz_bin")
-                .size()
-                .rename("n_obs")
-            )
-            summary = mean_stab.join(counts)
-            summary.to_excel(writer, sheet_name=fcol)
-
-# Fuzziness quantiles stability
-def fuzziness_by_quantiles(df : pd.DataFrame, fuzzy_cols : List[str], stab_cols : List[str], output_dir : Path, output_name : str, n_quantiles : int=10) -> None:    
-    out_dir = Path(output_dir, 'fuzziness_intervals')
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = Path(out_dir, output_name+".xlsx")
-    with pd.ExcelWriter(out_path) as writer:
-        for fcol in fuzzy_cols:
-            temp = df.copy()
-            temp["fuzz_quantile"] = pd.qcut(
-                temp[fcol],
-                q=n_quantiles,
-                duplicates="drop"
-            )
-            mean_stab = (
-                temp
-                .groupby("fuzz_quantile")[stab_cols]
-                .mean()
-            )
-            counts = (
-                temp
-                .groupby("fuzz_quantile")
-                .size()
-                .rename("n_obs")
-            )
-            summary = mean_stab.join(counts)
-            summary.to_excel(writer, sheet_name=fcol)
-
 def main() -> None:
+    # Input arguments
     ap = argparse.ArgumentParser()
     ap.add_argument("--inp_dir", type=str, default="", help="Input dataframes")
     ap.add_argument("--out_dir", type=str, default="", help="Output folder")
@@ -194,95 +104,42 @@ def main() -> None:
     df = pd.read_csv(inp_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    n_cluster = len(mu_cols)
-    feature_cols = [c for c in df.columns if c not in mu_cols+['cluster_hard', 'clusters', 'kmeans']]
+    n_cluster = len([c for c in df.columns if c.startswith(f"mu_1.5")])
+    feature_cols = [c for c in df.columns if (c not in ['clusters', 'kmeans']) 
+                    and not (c.startswith(f"mu_"))
+                    and not (c.startswith(f"cluster_hard"))]
     # Stability columns definition
-    rep_stability_columns = ['st_r_const_ass', 'st_r_ent', 'st_r_thr_0.5', 'st_r_thr_0.7', 'st_r_thr_0.9', 'st_r_0.5_val']
-    results_list = repetition_stability(df, n_cluster, feature_cols, 200, random_state=int(args.seed))
-    for i, name in enumerate(rep_stability_columns):
-        df[name] = results_list[i]
-    mu_cols = [c for c in df.columns if c.startswith("mu_")]
+    #methods = ["st_r_"]
+    methods = []
+    #rep_stability_columns = ["st_r_"+ind for ind in STABILITY_INDICATORS]
+    #results_list = repetition_stability(df, n_cluster, feature_cols, 200, random_state=int(args.seed))
+    #for i, name in enumerate(rep_stability_columns):
+    #    df[name] = results_list[i]
     perturbation_columns = []
-    for noise in [0.01, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.7, 1]:
-        columns = [f'st_gp_{noise}_const_ass', f'st_gp_{noise}_ent', f'st_gp_{noise}_thr_0.5', f'st_gp_{noise}_thr_0.7', f'st_gp_{noise}_thr_0.9', f'st_gp_{noise}_0.5_val']
+    for noise in NOISE_VALUES:
+        methods.append(f"st_p_{noise}_")
+        columns = [f'st_p_{noise}_'+ ind for ind in STABILITY_INDICATORS]
         perturbation_columns += columns
         results_list = perturbation_stability(df, n_cluster, feature_cols, noise, 200, random_state=int(args.seed))
         for i, name in enumerate(columns):
             df[name] = results_list[i]
-    stability_columns = rep_stability_columns + perturbation_columns
-    # Fuzzy columns definition
-    U = df[mu_cols].values
-    # Punti normali tende a 0, punti overlap ln(0.5), outliers ln(n_clust)
-    df["fuz_entropy"] = np.sum(U * np.log(U + 1e-12), axis=1)
-    U_sorted = np.sort(U, axis=1)[:, ::-1]
-    # Punti normali tende a 1, punti overlap 0, outliers 0
-    df["fuz_gap"] = U_sorted[:, 0] - U_sorted[:, 1]
-    # Punti normali tende a 0, punti overlap 0.5, outliers 1-1/c
-    df["fuz_index"] = 1.0 - np.sum(U ** 2, axis=1)
-    # Punti normali tende a 1, punti overlap 2, outliers c
-    df["fuz_eff_n_cl"] = 1.0 / np.sum(U ** 2, axis=1)
-    fuzziness_columns = [c for c in df.columns if c.startswith("fuz_")]
-    # Summary statistics, all dataset
-    out_name = inp_dir.name.replace('df_', '').replace('.csv','')
-    correlation_matrixes(df, fuzziness_columns, stability_columns, out_dir, out_name)
-    fuzziness_by_intervals(df, fuzziness_columns, stability_columns, out_dir, out_name)
-    fuzziness_by_quantiles(df, fuzziness_columns, stability_columns, out_dir, out_name)
-    # Normal data
-    df1 = df[~df['clusters'].isin([-1, -2, -3])]
-    correlation_matrixes(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_norm")
-    fuzziness_by_intervals(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_norm")
-    fuzziness_by_quantiles(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_norm")
-    # Type 1 outliers
-    df1 = df[df['clusters'].isin([-2])]
-    correlation_matrixes(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out1")
-    fuzziness_by_intervals(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out1")
-    fuzziness_by_quantiles(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out1")
-    # Type 2 outliers
-    df1 = df[df['clusters'].isin([-3])]
-    correlation_matrixes(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out2")
-    fuzziness_by_intervals(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out2")
-    fuzziness_by_quantiles(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out2")
-    # General outliers
-    df1 = df[df['clusters'].isin([-2, -3])]
-    correlation_matrixes(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out")
-    fuzziness_by_intervals(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out")
-    fuzziness_by_quantiles(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_out")
-    # Overlap points
-    df1 = df[df['clusters'].isin([-1])]
-    correlation_matrixes(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_ovlap")
-    fuzziness_by_intervals(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_ovlap")
-    fuzziness_by_quantiles(df1, fuzziness_columns, stability_columns, out_dir, out_name+"_ovlap")
-
+    #stability_columns = rep_stability_columns + perturbation_columns
+    stability_columns = perturbation_columns
+    other_columns = [col for col in df.columns if col not in stability_columns]
+    ordered_stability_columns = [met + ind for ind in STABILITY_INDICATORS for met in methods]
+    df = df[other_columns + ordered_stability_columns]
+    # Fuzziness columns definition
+    for m in FUZ_RANGE:
+        mu_cols = [c for c in df.columns if c.startswith(f"mu_{round(m,1)}")]
+        U = df[mu_cols].values
+        # Normal points tends to 0, overlap points to ln(0.5)/ln(n_clust), outliers to 1
+        df[f"fuz_{round(m,1)}_entropy"] = -np.sum(U * np.log(U + 1e-12), axis=1)/(np.log(n_cluster))
+        U_sorted = np.sort(U, axis=1)[:, ::-1]
+        # Normal points tends to 1, overlap points to 0, outliers to 0
+        df[f"fuz_{round(m,1)}_gap"] = U_sorted[:, 0] - U_sorted[:, 1]
+        # Normal points tends to 0, overlap points to 0.5, outliers to 1-1/c
+        #df[f"fuz_{round(m,1)}_index"] = 1.0 - np.sum(U ** 2, axis=1)
+    df.to_csv(out_dir / inp_dir.name, index=False)
+    
 if __name__ == "__main__":
     main()
-
-#code to test stability functions values excluding o erlap points or outliers or both
-    #print('totale')
-    #    for col in columns:
-    #        print(np.mean(df[col]))
-    #    print(' ')
-    #    print('no_overlap')
-    #    df1 = df[~df['clusters'].isin([-1])]
-    #    results_list = global_perturbation_stability(df1, n_cluster, feature_cols, noise, 50, random_state=int(args.seed))
-    #    for i, name in enumerate(columns):
-    #        df1[name] = results_list[i]
-    #    for col in columns:
-    #        print(np.mean(df1[col]))
-    #    print(' ')
-    #    print('no_outliers')
-    #    df1 = df[~df['clusters'].isin([-2,-3])]
-    #    results_list = global_perturbation_stability(df1, max(df['clusters'])+1, feature_cols, noise, 50, random_state=int(args.seed))
-    #    for i, name in enumerate(columns):
-    #        df1[name] = results_list[i]
-    #    for col in columns:
-    #        print(np.mean(df1[col]))
-    #    print(' ')
-    #    print('normali')
-    #    df1 = df[~df['clusters'].isin([-1,-2,-3])]
-    #    results_list = global_perturbation_stability(df1, max(df['clusters'])+1, feature_cols, noise, 50, random_state=int(args.seed))
-    #    for i, name in enumerate(columns):
-    #        df1[name] = results_list[i]
-    #    for col in columns:
-    #        print(np.mean(df1[col]))
-    #    print(' ')
-    #

@@ -9,7 +9,6 @@ from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler, Fu
 from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 
-
 @dataclass(frozen=True)
 class Preprocessed:
     X: np.ndarray

@@ -67,6 +67,7 @@ class FuzzyValidity:
 def fuzzy_validity(
     df: pd.DataFrame,
     mu_cols: Sequence[str],
+    cluster_hard : str,
     ambiguous_threshold: float = 0.6
 ) -> FuzzyValidity:
     U = df.loc[:, mu_cols].to_numpy(dtype=float)
@@ -83,7 +84,7 @@ def fuzzy_validity(
     ent_i = -np.sum(U * np.log(U + eps), axis=1)
     eff = float(np.mean(np.exp(ent_i)))
 
-    sizes = df["cluster_hard"].value_counts().sort_index()
+    sizes = df[cluster_hard].value_counts().sort_index()
     sizes_dict = {int(k): int(v) for k, v in sizes.items()}
 
     return FuzzyValidity(
@@ -98,6 +99,7 @@ def fuzzy_validity(
 def list_ambiguous_points(
     df: pd.DataFrame,
     mu_cols: Sequence[str],
+    cluster_hard,
     top_n: int = 30,
     threshold: float = 0.6,
     id_cols: Optional[Sequence[str]] = None,
@@ -116,37 +118,27 @@ def list_ambiguous_points(
     tmp["_margin"] = margin
 
     amb = tmp[tmp["_maxu"] < threshold].sort_values(["_maxu", "_margin"], ascending=[True, True]).head(top_n)
-    keep_cols = [c for c in id_cols if c in amb.columns] + ["cluster_hard"] + list(mu_cols) + ["_maxu", "_second", "_margin"]
+    keep_cols = [c for c in id_cols if c in amb.columns] + [cluster_hard] + list(mu_cols) + ["_maxu", "_second", "_margin"]
     return amb.loc[:, keep_cols]
 
 # -----------------------------------------
 # Cluster profiling / qualitative assessment
 # -----------------------------------------
 
-def infer_feature_columns(df: pd.DataFrame, mu_cols: Sequence[str], id_cols: Sequence[str]) -> List[str]:
-    # features = numeric columns excluding mu_* and cluster_hard
-    ignore = set(mu_cols) | {"cluster_hard"} | set(id_cols)
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    return [c for c in numeric_cols if c not in ignore]
+def cluster_feature_means(df: pd.DataFrame, feature_cols: Sequence[str], cluster_hard : str) -> pd.DataFrame:
+    return df.groupby(cluster_hard)[feature_cols].mean().sort_index()
 
-
-def cluster_feature_means(df: pd.DataFrame, feature_cols: Sequence[str]) -> pd.DataFrame:
-    return df.groupby("cluster_hard")[feature_cols].mean().sort_index()
-
-def cluster_feature_zscores(df: pd.DataFrame, feature_cols: Sequence[str]) -> pd.DataFrame:
+def cluster_feature_zscores(df: pd.DataFrame, feature_cols: Sequence[str], cluster_hard : str) -> pd.DataFrame:
     # z-score means relative to global mean/std for interpretability
     X = df[feature_cols].to_numpy(dtype=float)
     mu = X.mean(axis=0)
     sigma = X.std(axis=0)
     sigma = np.where(sigma < 1e-12, 1.0, sigma)
-    means = cluster_feature_means(df, feature_cols).to_numpy(dtype=float)
+    means = cluster_feature_means(df, feature_cols, cluster_hard).to_numpy(dtype=float)
     z = (means - mu) / sigma
-    return pd.DataFrame(z, index=cluster_feature_means(df, feature_cols).index, columns=feature_cols)
+    return pd.DataFrame(z, index=cluster_feature_means(df, feature_cols, cluster_hard).index, columns=feature_cols)
 
-def cluster_feature_fuzzy_means(df: pd.DataFrame, feature_cols: Sequence[str], mu_prefix: str = "mu_") -> pd.DataFrame:
-    mu_cols = [c for c in df.columns if c.startswith(mu_prefix)]
-    if not mu_cols:
-        raise ValueError("No membership columns found (expected columns like mu_0, mu_1, ...).")
+def cluster_feature_fuzzy_means(df: pd.DataFrame, mu_cols : Sequence[str], feature_cols: Sequence[str], mu_prefix : str = "mu_") -> pd.DataFrame:
     out = []
     for mu in mu_cols:
         w = df[mu]
@@ -154,15 +146,15 @@ def cluster_feature_fuzzy_means(df: pd.DataFrame, feature_cols: Sequence[str], m
     res = pd.DataFrame(out, index=[int(c.replace(mu_prefix, "")) for c in mu_cols])
     return res.sort_index()
 
-def cluster_feature_fuzzy_zscores(df: pd.DataFrame, feature_cols: Sequence[str]) -> pd.DataFrame:
+def cluster_feature_fuzzy_zscores(df: pd.DataFrame, mu_cols : Sequence[str], feature_cols: Sequence[str], mu_prefix : str = "mu_") -> pd.DataFrame:
     # z-score means relative to global mean/std for interpretability
     X = df[feature_cols].to_numpy(dtype=float)
     mu = X.mean(axis=0)
     sigma = X.std(axis=0)
     sigma = np.where(sigma < 1e-12, 1.0, sigma)
-    means = cluster_feature_fuzzy_means(df, feature_cols).to_numpy(dtype=float)
+    means = cluster_feature_fuzzy_means(df, mu_cols, feature_cols, mu_prefix).to_numpy(dtype=float)
     z = (means - mu) / sigma
-    return pd.DataFrame(z, index=cluster_feature_fuzzy_means(df, feature_cols).index, columns=feature_cols)
+    return pd.DataFrame(z, index=cluster_feature_fuzzy_means(df, mu_cols, feature_cols, mu_prefix).index, columns=feature_cols)
 
 def top_drivers_per_cluster(z_means: pd.DataFrame, top_k: int = 8) -> Dict[int, pd.DataFrame]:
     # returns, for each cluster, features with largest |z|
@@ -199,45 +191,3 @@ def crisp_separation_stats(df: pd.DataFrame, mu_cols: Sequence[str]) -> pd.DataF
         "margin": margin,
         "ratio": ratio,
     }).describe(percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]).T
-
-# Cluster consistency with consumption classes
-def classes_consinstency(df : pd.DataFrame, class_col : str, 
-                        hard_clust_labels : str, mu_prefix: str = "mu_"
-                        ) -> Tuple[int, int]:
-    if class_col not in df.columns:
-        raise ValueError("Missing 'cluster_hard' column in the Dataframe.")
-    classes = df[class_col].to_numpy()
-    # Hard violations
-    if hard_clust_labels not in df.columns:
-        raise ValueError("Missing 'cluster_hard' column in the Dataframe.")
-    clusters = df[hard_clust_labels].to_numpy()
-    total_pairs = 0
-    violating_pairs = 0
-    for k in np.unique(clusters):
-        idx = np.where(clusters == k)[0]
-        n = len(idx)
-        if n < 2:
-            continue
-        total_pairs += n * (n - 1) // 2
-        for i, j in combinations(idx, 2):
-            if classes[i] != classes[j]:
-                violating_pairs += 1
-    hard_violations = np.nan if total_pairs == 0 else violating_pairs / total_pairs
-    # Fuzzy violations
-    mu_cols = [c for c in df.columns if c.startswith(mu_prefix)]
-    if not mu_cols:
-        raise ValueError("No membership columns found (expected columns like mu_0, mu_1, ...).")
-    U = df[mu_cols].to_numpy()      # N x K
-    classes = df[class_col].to_numpy()
-    N = len(df)
-    total = 0.0
-    violating = 0.0
-    for i in range(N):
-        for j in range(i + 1, N):
-            s_ij = np.dot(U[i], U[j]) # Fuzzy Co-belonging
-            total += s_ij
-            if classes[i] != classes[j]:
-                violating += s_ij
-    fuzzy_violations = np.nan if total == 0 else violating / total
-
-    return hard_violations, fuzzy_violations
