@@ -133,18 +133,18 @@ def fuzziness_by_quantiles(dataframe : pd.DataFrame, stab_cols : List[str], outp
 def main() -> None:
     # Input arguments
     ap = argparse.ArgumentParser()
-    ap.add_argument("--inp_dir", type=str, default="", help="Input dataframes")
+    ap.add_argument("--df_path", type=str, default="", help="Input dataframes")
     ap.add_argument("--out_dir", type=str, default="", help="Output folder")
     args = ap.parse_args()
-    inp_dir = Path(args.inp_dir)
-    df = pd.read_csv(inp_dir)
+    df_path = Path(args.df_path)
+    df = pd.read_csv(df_path)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Fuzziness and stability columns
     fuzziness_cols = [c for c in df.columns if c.startswith("fuz_")]
     stability_cols = [c for c in df.columns if c.startswith("st_")]
     # Summary statistics
-    out_name = inp_dir.name.replace('df_', '').replace('.csv','')
+    out_name = df_path.name.replace('df_', '').replace('.csv','')
     correlation_matrixes(df, fuzziness_cols, stability_cols, out_dir, out_name)
     mask_dict = {
         'All' : True,

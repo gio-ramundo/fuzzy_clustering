@@ -38,7 +38,7 @@ N_CLUSTERS = {
 # Fuzziness values
 FUZ_RANGE = np.arange(1.5, 3.1, 0.3)
 # Perturbation noise values
-NOISE_VALUES = [0.4, 0.6, 0.8, 1]
+NOISE_VALUES = [0.8, 1, 1.2, 1.4]
 # FUZZINESS STABILITY INDICATORS
 FUZZINESS_INDICATORS = ['entropy', 'gap'] # 'index']
 STABILITY_INDICATORS = ['const_ass', 'thr_0.5'] # , 'thr_0.7', 'thr_0.9']
@@ -58,6 +58,9 @@ STATISTICS = Path(Path(__file__).resolve().parent, "fuz_stab_statistics.py")
 # Analisys
 FUZ_STAB_LINK = Path(Path(__file__).resolve().parent, "fuz_stab_link.py")
 
+# Kendalltau analysis
+KENDALL = Path(Path(__file__).resolve().parent, "kendalltau.py")
+
 def run(cmd: list[str]) -> None:
     print("\n>>", " ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -74,6 +77,9 @@ def main() -> None:
     
     if not FUZ_STAB_LINK.exists():
         raise FileNotFoundError(f"Missing {FUZ_STAB_LINK}")
+    
+    if not KENDALL.exists():
+        raise FileNotFoundError(f"Missing {KENDALL}")
 
     run([PYTHON, str(PLOT), "--df_path", str(DF_PATH), 
         "--out_dir", str(OUT_ROOT/'plots')])
@@ -90,9 +96,12 @@ def main() -> None:
              "--out_dir", str(OUT_ROOT/'statistics'),
              "--seed", str(rng.integers(0, 1_000_000))])
     
-    for csv_file in sorted([p for p in (OUT_ROOT/'statistics').iterdir() if p.suffix == '.csv']):
-        run([PYTHON, str(FUZ_STAB_LINK), "--inp_dir", str(csv_file), 
+    for csv_file in sorted([p for p in (OUT_ROOT/'statistics').iterdir() if p.suffix == '.csv' and p.name.startswith('df')]):
+        run([PYTHON, str(FUZ_STAB_LINK), "--df_path", str(csv_file), 
                                         "--out_dir", str(OUT_ROOT/'fuz_stability_link')])
+        
+    run([PYTHON, str(KENDALL), "--inp_dir", str(OUT_ROOT/'statistics'),
+        "--out_dir", str(OUT_ROOT/'fuz_stability_link')])
 
 if __name__ == "__main__":
     main()

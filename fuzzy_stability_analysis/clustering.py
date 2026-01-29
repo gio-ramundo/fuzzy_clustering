@@ -16,6 +16,15 @@ import sys
 sys.path.append(str(Path()))
 from preprocess import _islands_filter, preprocess_dataframe
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename=Path(Path(__file__).resolve().parent,"classes_pca_exp_var.log"),
+    filemode="w"
+)
+
 # Hyperparameters import
 from run_all_fs import ID_COLS, EC_LABELS, CLUSTERING_FEATURES, AREA_VALUES, POP_VALUES, N_CLUSTERS, FUZ_RANGE
 
@@ -46,11 +55,12 @@ def main() -> None:
         pca = PCA()
         pca.fit(prep.X)
         explained_variance = 0
-        print(f'Variance explained by PCA components for class {ec_cls}:')
+        # Explained variance analysis
+        vals = []
         for i in range(9):
             explained_variance += pca.explained_variance_ratio_[i]
-            print(explained_variance, end = " ")
-        print(' ')
+            vals.append(f"{explained_variance:.4f}")
+        logging.info(f"Variance explained by PCA components for class {ec_cls}: %s"," ".join(vals))
         # Fuzzy clustering
         for m in FUZ_RANGE:
             best_value = 1e20

@@ -17,12 +17,12 @@ from run_all_sd import FUZ_RANGE
 def main() -> None:
     # Input values
     ap = argparse.ArgumentParser()
-    ap.add_argument("--inp_dir", type=str, default="", help="Input dataframes")
+    ap.add_argument("--df_path", type=str, default="", help="Input dataframes")
     ap.add_argument("--out_dir", type=str, default="", help="Output folder")
     args = ap.parse_args()
-    inp_dir = Path(args.inp_dir)
+    df_path = Path(args.df_path)
     out_dir = Path(args.out_dir)
-    df = pd.read_csv(inp_dir)
+    df = pd.read_csv(df_path)
     n_original_clusters = max(list(df['clusters']))+1
     features_columns = [col for col in df.columns if col != 'clusters']
     # n_cluster identification, identify number that maximes correspondence in normal point (no outliers, no overlap)
@@ -64,12 +64,18 @@ def main() -> None:
     #    for i in range(len(clusters))
     #]
     #plt.legend(handles=handles, title="Clusters")
-    #plt.savefig(out_plot_dir/inp_dir.name.replace('df_', '').replace('.csv','_km.png'))
+    #plt.savefig(out_plot_dir/df_path.name.replace('df_', '').replace('.csv','_km.png'))
     #plt.close()
 
     # Fuzzy C-Means
+    rng = np.random.default_rng(420)
     for m in FUZ_RANGE:
-        _, U, _, _, _, _, _ = fuzz.cluster.cmeans(X.values.T, best_k, m, error=1e-5, maxiter=100000, seed = 420)
+        best_value = 1e20
+        for i in range(5):
+            _, Uc, _, _, jm, _, _ = fuzz.cluster.cmeans(X.values.T, best_k, m, error=1e-5, maxiter=100000, seed = rng.integers(10,1000))
+            if jm[-1] < best_value:
+                best_value = jm[-1]
+                U = Uc.copy()
         for k in range(best_k):
             df[f"mu_{round(m,1)}_{k}"] = U[k, :]
         labels_fuz = np.argmax(U, axis=0)
@@ -96,9 +102,8 @@ def main() -> None:
         #    for i in range(len(clusters))
         #]
         #plt.legend(handles=handles, title="Clusters")
-        #plt.savefig(out_dir/inp_dir.name.replace('df_', '').replace('.csv','_fcm.png'))
-    
-    df.to_csv(out_dir / inp_dir.name, index=False)
+        #plt.savefig(out_dir/df_path.name.replace('df_', '').replace('.csv','_fcm.png'))
+    df.to_csv(out_dir / df_path.name, index=False)
         
 if __name__ == "__main__":
     main()

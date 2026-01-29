@@ -96,12 +96,12 @@ def perturbation_stability(df : pd.DataFrame, n : int, feature_cols : List[str],
 def main() -> None:
     # Input arguments
     ap = argparse.ArgumentParser()
-    ap.add_argument("--inp_dir", type=str, default="", help="Input dataframes")
+    ap.add_argument("--df_path", type=str, default="", help="Input dataframes")
     ap.add_argument("--out_dir", type=str, default="", help="Output folder")
     ap.add_argument("--seed", type=int, default="", help="Random seed")
     args = ap.parse_args()
-    inp_dir = Path(args.inp_dir)
-    df = pd.read_csv(inp_dir)
+    df_path = Path(args.df_path)
+    df = pd.read_csv(df_path)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     n_cluster = len([c for c in df.columns if c.startswith(f"mu_1.5")])
@@ -139,7 +139,7 @@ def main() -> None:
         df[f"fuz_{round(m,1)}_gap"] = U_sorted[:, 0] - U_sorted[:, 1]
         # Normal points tends to 0, overlap points to 0.5, outliers to 1-1/c
         #df[f"fuz_{round(m,1)}_index"] = 1.0 - np.sum(U ** 2, axis=1)
-    df.to_csv(out_dir / inp_dir.name, index=False)
+    df.to_csv(out_dir / df_path.name, index=False)
     
 if __name__ == "__main__":
     main()

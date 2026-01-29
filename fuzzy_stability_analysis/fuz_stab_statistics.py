@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 import numpy as np
 import pandas as pd
 
-from run_all_fs import CLUSTERING_FEATURES, ID_COLS, N_CLUSTERS, FUZ_RANGE, NOISE_VALUES, STABILITY_INDICATORS
+from run_all_fs import CLUSTERING_FEATURES, ID_COLS, N_CLUSTERS, FUZ_RANGE, NOISE_VALUES, STABILITY_INDICATORS, FUZZINESS_INDICATORS
 
 # Function to align label of two different clustering
 def align_labels(labels_ref : np.array, labels : np.array) -> np.array:
@@ -76,18 +76,114 @@ def perturbation_stability(df : pd.DataFrame, n : int, feature_cols : List[str],
             all_labels[run] = align_labels(all_labels[0], labels)
     return stability_statistics(all_labels, n_samples, n_runs)
 
+# Fuzziness and stability indicators means and quantiles
+def mean_indicators_computation(dataframe : pd.DataFrame, stab_cols : List[str], ordered_fuzzy_cols : List[str], output_dir : Path, output_name : str, n_quantiles : int=10, n_intervals : int=10) -> None:    
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_dir, output_name+".xlsx")
+    with pd.ExcelWriter(out_path) as writer:
+        means_fuz = pd.DataFrame(
+            index = ordered_fuzzy_cols,
+            columns = ['ALL_DATA'],
+            dtype = float
+        )
+        means_stab = pd.DataFrame(
+            index = stab_cols,
+            columns = ['ALL_DATA'],
+            dtype = float
+        )
+        means_fuz['ALL_DATA'] = dataframe[ordered_fuzzy_cols].mean()
+        means_stab['ALL_DATA'] = dataframe[stab_cols].mean()
+        sheet_name = f"Means"  
+        current_row = 0
+        pd.Series([f"Fuzziness indicators mean"]).to_excel(writer, sheet_name=sheet_name, startrow=current_row, index=False, header=False)
+        current_row += 1
+        means_fuz.round(3).to_excel(writer, sheet_name=sheet_name, startrow=current_row)
+        current_row += len(means_fuz) + 2
+        pd.Series([f"Stability indicators mean"]).to_excel(writer, sheet_name=sheet_name, startrow=current_row, index=False, header=False)
+        current_row += 1
+        means_stab.round(3).to_excel(writer, sheet_name=sheet_name, startrow=current_row)
+        
+        # Fuzziness quantiles and intervals
+        sheet_name1 = f"Fuzzy quantiles"    
+        current_row1 = 0
+        sheet_name2 = f"Fuzzy intervals"    
+        current_row2 = 0
+        for fcol in ordered_fuzzy_cols:
+            q = np.arange(0, n_quantiles + 1) / n_quantiles
+            bin_width = 1/n_intervals
+            bins = np.arange(0, 1 + bin_width, bin_width)
+            labels = [f"{round(bins[i],2)}–{round(bins[i+1],2)}"
+                      for i in range(len(bins) - 1)]
+            quantiles = pd.DataFrame(
+                index = q,
+                columns = ['ALL_DATA'],
+                dtype = float
+            )
+            intervals = pd.DataFrame(
+                columns = ['ALL_DATA'],
+                dtype = int
+            )
+            quantiles['ALL_DATA'] = dataframe[fcol].quantile(q)
+            intervals['ALL_DATA'] = pd.cut(dataframe[fcol], bins=bins, 
+                                    include_lowest=True, right=True
+                                ).value_counts().sort_index()
+            intervals.index = labels
+            pd.Series([f"{fcol}"]).to_excel(writer, sheet_name=sheet_name1, startrow=current_row1, index=False, header=False)
+            current_row1 += 1
+            quantiles.round(3).to_excel(writer, sheet_name=sheet_name1, startrow=current_row1)
+            current_row1 += len(quantiles) + 2
+            pd.Series([f"{fcol}"]).to_excel(writer, sheet_name=sheet_name2, startrow=current_row2, index=False, header=False)
+            current_row2 += 1
+            intervals.round(3).to_excel(writer, sheet_name=sheet_name2, startrow=current_row2)
+            current_row2 += len(intervals) + 2
+
+        # Stability quantiles and intervals
+        sheet_name1 = f"Stability quantiles"    
+        current_row1 = 0
+        sheet_name2 = f"Stability intervals"    
+        current_row2 = 0
+        for scol in stab_cols:
+            q = np.arange(0, n_quantiles + 1) / n_quantiles
+            bin_width = 1/n_intervals
+            bins = np.arange(0, 1 + bin_width, bin_width)
+            labels = [f"{round(bins[i],2)}–{round(bins[i+1],2)}"
+                      for i in range(len(bins) - 1)]
+            quantiles = pd.DataFrame(
+                index = q,
+                columns = ['ALL_DATA'],
+                dtype = float
+            )
+            intervals = pd.DataFrame(
+                columns = ['ALL_DATA'],
+                dtype = int
+            )
+            quantiles['ALL_DATA'] = dataframe[scol].quantile(q)
+            intervals['ALL_DATA'] = pd.cut(dataframe[scol], bins=bins, 
+                                    include_lowest=True, right=True
+                                ).value_counts().sort_index()
+            intervals.index = labels
+            pd.Series([f"{scol}"]).to_excel(writer, sheet_name=sheet_name1, startrow=current_row1, index=False, header=False)
+            current_row1 += 1
+            quantiles.to_excel(writer, sheet_name=sheet_name1, startrow=current_row1)
+            current_row1 += len(quantiles) + 2
+            pd.Series([f"{scol}"]).to_excel(writer, sheet_name=sheet_name2, startrow=current_row2, index=False, header=False)
+            current_row2 += 1
+            intervals.to_excel(writer, sheet_name=sheet_name2, startrow=current_row2)
+            current_row2 += len(intervals) + 2
+
 def main() -> None:
     # Input arguments
     ap = argparse.ArgumentParser()
-    ap.add_argument("--inp_dir", type=str, default="", help="Input dataframes")
+    ap.add_argument("--df_path", type=str, default="", help="Input dataframes")
     ap.add_argument("--out_dir", type=str, default="", help="Output folder")
     ap.add_argument("--seed", type=int, default="", help="Random seed")
     args = ap.parse_args()
-    inp_dir = Path(args.inp_dir)
-    df_cls = pd.read_csv(inp_dir)
+    df_path = Path(args.df_path)
+    df_cls = pd.read_csv(df_path)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    class_name = inp_dir.name.replace('.csv', '').replace('df_class_', '')
+    class_name = df_path.name.replace('.csv', '').replace('df_class_', '')
     # Stability columns definition
     stability_columns = []
     for noise in NOISE_VALUES:
@@ -96,22 +192,25 @@ def main() -> None:
         results_list = perturbation_stability(df_cls, N_CLUSTERS[class_name], CLUSTERING_FEATURES, noise, 200, random_state=int(args.seed))
         for i, name in enumerate(columns):
             df_cls[name] = results_list[i]
-    other_columns = [col for col in df_cls.columns if col not in stability_columns]
-    ordered_stability_columns = [f'st_{noise}_' + ind for ind in STABILITY_INDICATORS for noise in NOISE_VALUES]
-    df_ordered = df_cls[other_columns + ordered_stability_columns]
     # Fuzziness columns definition
     for m in FUZ_RANGE:
-        mu_cols = [c for c in df_ordered.columns if c.startswith(f"mu_{round(m,1)}_")]
-        U = df_ordered[mu_cols].values
+        mu_cols = [c for c in df_cls.columns if c.startswith(f"mu_{round(m,1)}_")]
+        U = df_cls[mu_cols].values
         # Normal points tends to 0, overlap points to ln(0.5)/ln(n_clust), outliers to 1
-        df_ordered[f"fuz_{round(m,1)}_entropy"] = -np.sum(U * np.log(U + 1e-12), axis=1)/(np.log(N_CLUSTERS[class_name]))
+        df_cls[f"fuz_{round(m,1)}_entropy"] = -np.sum(U * np.log(U + 1e-12), axis=1)/(np.log(N_CLUSTERS[class_name]))
         U_sorted = np.sort(U, axis=1)[:, ::-1]
         # Normal points tends to 1, overlap points to 0, outliers to 0
-        df_ordered[f"fuz_{round(m,1)}_gap"] = U_sorted[:, 0] - U_sorted[:, 1]
+        df_cls[f"fuz_{round(m,1)}_gap"] = U_sorted[:, 0] - U_sorted[:, 1]
         # Normal points tends to 0, overlap points to 0.5, outliers to 1-1/c
-        #df_ordered[f"fuz_{round(m,1)}_index"] = 1.0 - np.sum(U ** 2, axis=1)
+        #df_cls[f"fuz_{round(m,1)}_index"] = 1.0 - np.sum(U ** 2, axis=1)
+    ordered_stability_columns = [f'st_{noise}_' + ind for ind in STABILITY_INDICATORS for noise in NOISE_VALUES]
+    ordered_fuzziness_columns = [f"fuz_{round(m,1)}_" + ind for ind in FUZZINESS_INDICATORS for m in FUZ_RANGE]
+    other_columns = [col for col in df_cls.columns if col not in ordered_stability_columns and col not in ordered_fuzziness_columns]
+    df_ordered = df_cls[other_columns + ordered_stability_columns + ordered_fuzziness_columns]
     # Exportation
-    df_ordered.to_csv(out_dir / inp_dir.name, index=False)
+    df_ordered.to_csv(out_dir / df_path.name, index=False)
+    out_name = df_path.name.replace('df_', '').replace('.csv','') + '_indicators'
+    mean_indicators_computation(df_ordered, ordered_stability_columns, ordered_fuzziness_columns, out_dir, out_name)
 
 if __name__ == "__main__":
     main()
