@@ -100,7 +100,7 @@ def list_ambiguous_points(
     df: pd.DataFrame,
     mu_cols: Sequence[str],
     cluster_hard,
-    top_n: int = 30,
+    top_n: int = 1000,
     threshold: float = 0.6,
     id_cols: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
